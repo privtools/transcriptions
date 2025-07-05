@@ -204,19 +204,19 @@ def transcribe(media_file, language, session_id):
         session_id = str(uuid.uuid4())
         audio_file, transcription_file, summary_file = files(session_id)
         if media_file:
-            if media_file.lower().endswith(video_extensions):
-                gd.Info("Obteniendo audio")
-                video_clip = VideoFileClip(media_file)
-                audio_clip = video_clip.audio
-                audio_clip.write_audiofile(audio_file)
-                audio_clip.close()
-                video_clip.close()
-                media_file = audio_file
             if media_file.lower().endswith(audio_extensions) or media_file.lower().endswith(video_extensions):
-                if language=='detectar':
-                    language = None
-                if media_file.lower().endswith(audio_extensions): 
+                if media_file.lower().endswith(video_extensions):
+                    gd.Info("Obteniendo audio")
+                    video_clip = VideoFileClip(media_file)
+                    audio_clip = video_clip.audio
+                    audio_clip.write_audiofile(audio_file)
+                    audio_clip.close()
+                    video_clip.close()
+                    media_file = audio_file
+                else:
                     shutil.copy(media_file,audio_file)
+                if language=='detectar':
+                    language = None             
                 whisper_model = os.path.join(WHISPER_MODEL_PATH,WHISPER_MODEL)
                 model = WhisperModel(whisper_model, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE_TYPE)
                 segments, info = model.transcribe(media_file, beam_size=5, language=language)
