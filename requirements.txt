@@ -1,0 +1,9 @@
+torch==2.2.2
+torchaudio==2.2.2
+numpy<=1.26.4
+pyannote.audio
+faster-whisper
+requests
+gradio
+python-dotenv
+moviepy
