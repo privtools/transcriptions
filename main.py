@@ -339,7 +339,7 @@ def main():
                 language = gd.components.Dropdown(["es", "en", "fr", "detectar"], label="Idioma", info="Cual es el idioma de la ponencia?")
                 transcribe_btn = gd.Button(value="Transcribir", variant="primary")
                 diarize_btn = gd.Button(value="Separar ponentes", variant="primary", interactive=False)
-                prompt = gd.components.Textbox(label="Prompt para el LLM (Únicamente se aplica si se marca la opción 'Incluir resumen'):", value=LLM_DEFAULT_PROMPT)
+                prompt = gd.components.Textbox(label="Prompt para el LLM:", value=LLM_DEFAULT_PROMPT)
                 process_btn = gd.Button(value="Procesar", variant="primary", interactive=False)
             with gd.Column():
                 output_text = gd.components.Textbox(label="Transcripción")
