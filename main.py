@@ -314,7 +314,7 @@ def main():
     with gd.Blocks() as demo:
         session_id = gd.State()
         with gd.Row():
-            gd.components.Markdown(value="## PoC IA AEPD: Trascripción y resumen de ponencias por IA v0.0.1beta")
+            gd.components.Markdown(value="## PoC IA: Trascripción y resumen de ponencias por IA v0.0.1beta")
         with gd.Row():
             with gd.Column():
                 gd.components.Textbox(label="Legal",interactive=False,value=LEGAL_DISCLAIMER)            
