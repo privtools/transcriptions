@@ -1,5 +1,5 @@
 import requests
-import os, time
+import os, time, shutil
 import gradio as gd
 from faster_whisper import WhisperModel
 import uuid
@@ -26,8 +26,11 @@ WHISPER_DEVICE = os.getenv('WHISPER_DEVICE', 'cpu')
 WHISPER_COMPUTE_TYPE = os.getenv('WHISPER_COMPUTE_TYPE', 'default')
 SAMPLE_RATE = int(os.getenv('SAMPLE_RATE','16000'))
 
-LLM_API_URL = os.getenv('LLM_API_URL',"http://ollama:11434/api/chat")
-LLM_MODEL = os.getenv('LLM_MODEL','mistral-small3.1:24b-instruct-2503-q4_K_M')
+LLM_API_URL = os.getenv('LLM_API_URL',"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1/chat/completions")
+LLM_MODEL = os.getenv('LLM_MODEL','@cf/mistralai/mistral-small-3.1-24b-instruct')
+LLM_AUTH_TOKEN = os.getenv('LLM_AUTH_TOKEN','')
+LLM_ACCOUNT_ID = os.getenv('LLM_ACCOUNT_ID','')
+LLM_API_URL = LLM_API_URL.replace('{account_id}',LLM_ACCOUNT_ID)
 LLM_TEMPERATURE = float(os.getenv('LLM_TEMPERATURE', '0.2'))
 LLM_MAX_OUTPUT_TOKENS = int(os.getenv('LLM_MAX_OUTPUT_TOKENS', '4096'))
 LLM_CONTEXT_SIZE = int(os.getenv('LLM_CONTEXT_SIZE', '4096'))
@@ -37,8 +40,6 @@ LLM1_SYSTEM_PROMPT = os.getenv('LLM1_SYSTEM_PROMPT', 'No des las gracias. Estilo
 LLM2_SYSTEM_PROMPT = os.getenv('LLM2_SYSTEM_PROMPT', 'No des las gracias. Estilo de artículo periodístico. No seas esquemático.')
 
 LEGAL_DISCLAIMER = os.getenv('LEGAL DISCLAIMER', "Este demostrador es una Prueba de Concepto (PoC), no un producto final verificado. Los resultados arrojados por el demostrador no están verificados.")
-
-DIARIZE_ENABLED = os.getenv('DIARIZE_ENABLED','false') == 'true'
 
 video_extensions = tuple(os.getenv('VIDEO_EXTENSIONS', '.mp4,.mov' ).split(','))
 audio_extensions = tuple(os.getenv('AUDIO_EXTENSIONS','.mp3,.m4a').split(','))
@@ -172,147 +173,163 @@ def get_last_segment(annotation):
     for segment in annotation.itersegments():
         last_segment = segment
     return last_segment
-##############################################################
-# DIARIZATION
 
 
-def summarize(media_file, prompt, language, session_id, summarize_cb, diarize_cb):
-    now = time.time()
-    for f in os.listdir("./transcriptions/"):
-        file_name = os.path.join("./transcriptions/",f)
-        if os.stat(file_name).st_mtime < now - 1 * 86400 and f.lower().endswith(text_extensions):
-            os.remove(file_name)
-    for f in os.listdir("./summaries/"):
-        file_name = os.path.join("./summaries/",f)
-        if os.stat(file_name).st_mtime < now - 1 * 86400 and f.lower().endswith(text_extensions):
-            os.remove(file_name)
-    for f in os.listdir("./audios/"):
-        file_name = os.path.join("./audios/",f)
-        if os.stat(file_name).st_mtime < now - 1 * 86400 and f.lower().endswith(audio_extensions):
-            os.remove(file_name)
-    transcription_text = ""
-    summary_text = summary_header
-    session_id = str(uuid.uuid4())
+
+def files (session_id):
     summary_file = "./summaries/" + session_id + ".md"
     transcription_file = "./transcriptions/" + session_id + ".txt"
     audio_file = "./audios/" + session_id + ".mp3"
+    return audio_file, transcription_file, summary_file
     
+
+def transcribe(media_file, language, session_id):
+    if media_file:
+        now = time.time()
+        for f in os.listdir("./transcriptions/"):
+            file_name = os.path.join("./transcriptions/",f)
+            if os.stat(file_name).st_mtime < now - 1 * 86400 and f.lower().endswith(text_extensions):
+                os.remove(file_name)
+        for f in os.listdir("./summaries/"):
+            file_name = os.path.join("./summaries/",f)
+            if os.stat(file_name).st_mtime < now - 1 * 86400 and f.lower().endswith(text_extensions):
+                os.remove(file_name)
+        for f in os.listdir("./audios/"):
+            file_name = os.path.join("./audios/",f)
+            if os.stat(file_name).st_mtime < now - 1 * 86400 and f.lower().endswith(audio_extensions):
+                os.remove(file_name)
+        transcription_text = ""
+        transcription_list = []
+        summary_text = summary_header
+        session_id = str(uuid.uuid4())
+        audio_file, transcription_file, summary_file = files(session_id)
+        if media_file:
+            if media_file.lower().endswith(video_extensions):
+                gd.Info("Obteniendo audio")
+                video_clip = VideoFileClip(media_file)
+                audio_clip = video_clip.audio
+                audio_clip.write_audiofile(audio_file)
+                audio_clip.close()
+                video_clip.close()
+                media_file = audio_file
+            if media_file.lower().endswith(audio_extensions) or media_file.lower().endswith(video_extensions):
+                if language=='detectar':
+                    language = None
+                if media_file.lower().endswith(audio_extensions): 
+                    shutil.copy(media_file,audio_file)
+                whisper_model = os.path.join(WHISPER_MODEL_PATH,WHISPER_MODEL)
+                model = WhisperModel(whisper_model, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE_TYPE)
+                segments, info = model.transcribe(media_file, beam_size=5, language=language)
+                gd.Info("Iniciando transcripción")     
+                for segment in segments:
+                    transcription_list.append({"start": segment.start, "end": segment.end, "text": segment.text})
+                    transcription_text+=("\n%s" % (segment.text))
+                    yield transcription_text, transcription_list, transcription_file, audio_file, session_id, gd.update(interactive=False), gd.update(interactive=False)
+                del model
+                gc.collect()
+            if media_file.lower().endswith(text_extensions):
+                with open(media_file,"r", encoding="utf-8") as f:
+                    transcription_text = f.read()
+                    audio_file = None
+            with open(transcription_file, "w", encoding="utf-8") as f:
+                        f.write(transcription_text)
+            yield transcription_text, transcription_list, transcription_file, audio_file, session_id, gd.update(interactive=True) if audio_file else gd.update(interactive=False), gd.update(interactive=True)
+        else:
+            gd.Info("Cargando video, dame unos segundos y vuelve a intentarlo.")
+
+ 
+def diarize(transcription_list, session_id):
+    gd.Info("Iniciando identificación de ponentes")
+    audio_file, transcription_file, summary_file = files(session_id)
+    pipeline = Pipeline.from_pretrained("./models/config.yaml")
+    pipeline.to(torch.device(WHISPER_DEVICE))
+    transcription_text=""
+    media_file_audio = load_audio(audio_file)
+    diarization = pipeline({"waveform": torch.from_numpy(media_file_audio).unsqueeze(0), "sample_rate": SAMPLE_RATE})
+    diarized_list = []
+    diarized_list = align_transcript_diarization(transcription_list,diarization)
+    transcription_text = "\n\n".join(f"{speaker}: {text.strip()}" for speaker, start, end, text in diarized_list)
+    del pipeline
+    gc.collect()
+    torch.cuda.empty_cache()
+    with open(transcription_file,"w",encoding="utf-8") as f:
+        f.write(transcription_text)
+    return transcription_text, session_id, gd.update(interactive=True)
+
+
+
+def summarize(transcription_text, prompt, session_id):  
+    gd.Info("Creando resumen")
+    audio_file, transcription_file, summary_file = files(session_id)
     first_prompt = prompt + LLM1_SYSTEM_PROMPT
     second_prompt = prompt + LLM2_SYSTEM_PROMPT
-    if media_file:
-        yield transcription_text, summary_text, summary_file, transcription_file, audio_file, session_id, gd.update(interactive=False)    
-        if media_file.lower().endswith(text_extensions):
-            with open(media_file,"r", encoding="utf-8") as f:
-                transcription_text = f.read()
-                audio_file = None
-                with open(transcription_file, "w", encoding="utf-8") as f:
-                    f.write(transcription_text)
-        if media_file.lower().endswith(video_extensions):
-            gd.Info("Obteniendo audio")
-            video_clip = VideoFileClip(media_file)
-            audio_clip = video_clip.audio
-            audio_clip.write_audiofile(audio_file)
-            audio_clip.close()
-            video_clip.close()
-            media_file = audio_file
-        if media_file.lower().endswith(audio_extensions) or media_file.lower().endswith(video_extensions):
-            if language=='detectar':
-                language = None
-            segments, info = model.transcribe(media_file, beam_size=5, language=language)
-            gd.Info("Iniciando transcripción")     
-            transcription_list = []
-            for segment in segments:
-                transcription_list.append({"start": segment.start, "end": segment.end, "text": segment.text})
-                transcription_text+=("\n%s" % (segment.text))
-                yield transcription_text, summary_text, summary_file, transcription_file, audio_file, session_id, gd.update(interactive=False)
-            
-            # DIARIZATION
-            if diarize_cb and DIARIZE_ENABLED:
-                gd.Info("Iniciando identificación de ponentes")
-                pipeline = Pipeline.from_pretrained("./models/config.yaml")
-                pipeline.to(torch.device(WHISPER_DEVICE))
-                transcription_text=""
-                media_file_audio = load_audio(media_file)
-                diarization = pipeline({"waveform": torch.from_numpy(media_file_audio).unsqueeze(0), "sample_rate": SAMPLE_RATE})
-                diarized_list = []
-                diarized_list = align_transcript_diarization(transcription_list,diarization)
-                transcription_text = "\n\n".join(f"{speaker}: {text.strip()}" for speaker, start, end, text in diarized_list)
-                yield transcription_text, summary_text, summary_file, transcription_file, audio_file, session_id, gd.update(interactive=False)
-                del pipeline
-                gc.collect()
-                torch.cuda.empty_cache()
-            # DIARIZATION
-
-            with open(transcription_file,"w",encoding="utf-8") as f:
-                f.write(transcription_text)
-
-        yield transcription_text, summary_text, summary_file, transcription_file, audio_file, session_id, gd.update(interactive=False)
-        if summarize_cb:
-            gd.Info("Creando resumen")
-            try:
-                response = requests.post(
-                    LLM_API_URL,
-                    headers={"Content-Type": "application/json"
-                        },
-                    json={
-                        "max_tokens": LLM_MAX_OUTPUT_TOKENS,
-                        "messages": [
-                        {"role": "system", "content": first_prompt},
-                        {"role": "user", "content": transcription_text},
-                        ],
-                        "model": LLM_MODEL,
-                        "stream": False,
-                        "options": {"temperature": LLM_TEMPERATURE,
-                                    "num_ctx": LLM_CONTEXT_SIZE
-                                    }
-                    },
-                    verify=False
-                )
-                # print(response.json())
-                if response.ok:
-                    result = response.json()
-                    summary_text = summary_header + result['message']['content']
-                else:
-                    summary_text = transcription_text
-            except requests.exceptions.ConnectionError as e:
-                summary_text = "### Error: Contacte con soporte"
-            
-            try:
-                response = requests.post(
-                LLM_API_URL,
-                headers={"Content-Type": "application/json"
-                    },
-                json={
-                    "max_tokens": LLM_MAX_OUTPUT_TOKENS,
-                        "messages": [
-                        {"role": "system", "content": second_prompt},
-                        {"role": "user", "content": summary_text},
-                        ],
-                    "model": LLM_MODEL,
-                    "stream": False,
-                    "options": {"temperature": LLM_TEMPERATURE,
-                                "num_ctx": LLM_CONTEXT_SIZE
-                                }
+    try:
+        response = requests.post(
+            LLM_API_URL,
+            headers={"Content-Type": "application/json",
+            "Authorization": f"Bearer {LLM_AUTH_TOKEN}"
                 },
-                verify=False
-                )
-                if response.ok:
-                    result = response.json()
-                    summary_text = summary_header + result['message']['content']
-                    #summary_text += result['response']
-                    with open(summary_file, "w", encoding="utf-8") as f:
-                        f.write(summary_text)
-            except requests.exceptions.ConnectionError as e:
-                summary_text = "### Error: Contacte con soporte"
-        yield transcription_text, summary_text, summary_file, transcription_file, audio_file, session_id, gd.update(interactive=True)
-        gd.Info("Trabajo finalizado")
-    else:
-        gd.Info("Cargando video, dame unos segundos y vuelve a intentarlo.")
-        yield transcription_text, summary_text, summary_file, transcription_file, audio_file, session_id, gd.update(interactive=True)
+            json={
+                "max_tokens": LLM_MAX_OUTPUT_TOKENS,
+                "messages": [
+                {"role": "system", "content": first_prompt},
+                {"role": "user", "content": transcription_text},
+                ],
+                "model": LLM_MODEL,
+                "stream": False,
+                "options": {"temperature": LLM_TEMPERATURE,
+                            "num_ctx": LLM_CONTEXT_SIZE
+                            }
+            },
+            verify=True
+        )
+        # print(response.json())
+        if response.ok:
+            result = response.json()
+            summary_text = summary_header + result['choices'][0]['message']['content']
+        else:
+            summary_text = transcription_text
+    except requests.exceptions.ConnectionError as e:
+        summary_text = "### Error: Contacte con soporte"
+    
+    try:
+        response = requests.post(
+        LLM_API_URL,
+        headers={"Content-Type": "application/json",
+        "Authorization": f"Bearer {LLM_AUTH_TOKEN}"
+            },
+        json={
+            "max_tokens": LLM_MAX_OUTPUT_TOKENS,
+                "messages": [
+                {"role": "system", "content": second_prompt},
+                {"role": "user", "content": summary_text},
+                ],
+            "model": LLM_MODEL,
+            "stream": False,
+            "options": {"temperature": LLM_TEMPERATURE,
+                        "num_ctx": LLM_CONTEXT_SIZE
+                        }
+        },
+        verify=True
+        )
+        if response.ok:
+            result = response.json()
+            summary_text = summary_header + result['choices'][0]['message']['content']
+            #summary_text += result['response']
+            with open(summary_file, "w", encoding="utf-8") as f:
+                f.write(summary_text)
+    except requests.exceptions.ConnectionError as e:
+        summary_text = "### Error: Contacte con soporte"
+    gd.Info("Trabajo finalizado")
+    return summary_text, summary_file, session_id
+    
+
 
 def main():
     with gd.Blocks() as demo:
-        session_id = gd.State()
+        session_id = gd.State(None)
+        transcription_list = gd.State(None)
+
         with gd.Row():
             gd.components.Markdown(value="## PoC IA: Trascripción y resumen de ponencias por IA v0.0.1beta")
         with gd.Row():
@@ -320,17 +337,20 @@ def main():
                 gd.components.Textbox(label="Legal",interactive=False,value=LEGAL_DISCLAIMER)            
                 file_input = gd.components.UploadButton(type="filepath",file_types=["video", "audio","text"],label="Cargar video,audio o transcripción", variant="primary", interactive=True)
                 language = gd.components.Dropdown(["es", "en", "fr", "detectar"], label="Idioma", info="Cual es el idioma de la ponencia?")
-                diarize_cb = gd.components.Checkbox(label="Separar ponentes", info="Requiere considerablemente más tiempo de proceso")
-                summarize_cb = gd.components.Checkbox(label="Incluir resumen", value=True)
+                transcribe_btn = gd.Button(value="Transcribir", variant="primary")
+                diarize_btn = gd.Button(value="Separar ponentes", variant="primary", interactive=False)
                 prompt = gd.components.Textbox(label="Prompt para el LLM (Únicamente se aplica si se marca la opción 'Incluir resumen'):", value=LLM_DEFAULT_PROMPT)
-                process_btn = gd.Button(value="Procesar", variant="primary")
+                process_btn = gd.Button(value="Procesar", variant="primary", interactive=False)
             with gd.Column():
                 output_text = gd.components.Textbox(label="Transcripción")
                 download_transcription_btn = gd.components.DownloadButton(label="Descargar transcripcion", variant="primary")
                 summary_text = gd.components.Markdown()
                 download_summary_btn = gd.components.DownloadButton(label="Descargar resumen", variant="primary")
                 download_audio_btn = gd.components.DownloadButton(label="Descargar audio", variant="primary")
-        process_btn.click(fn=summarize,inputs=[file_input,prompt, language, session_id, summarize_cb, diarize_cb],outputs=[output_text,summary_text,download_summary_btn,download_transcription_btn,download_audio_btn, session_id, process_btn], show_progress=True, api_name=False)
+        
+        transcribe_btn.click(fn=lambda: gd.update(interactive=False), inputs=None, outputs=transcribe_btn, api_name=False).then(fn=transcribe,inputs=[file_input, language, session_id],outputs=[output_text, transcription_list, download_transcription_btn,download_audio_btn, session_id, diarize_btn, process_btn], show_progress=True, api_name=False).then(fn=lambda: gd.update(interactive=True), inputs=None, outputs=transcribe_btn, api_name=False)
+        diarize_btn.click(fn=lambda: gd.update(interactive=False), inputs=None, outputs=diarize_btn,api_name=False).then(fn=diarize,inputs=[transcription_list, session_id],outputs=[output_text, session_id, process_btn], show_progress=True, api_name=False).then(fn=lambda: gd.update(interactive=True), inputs=None, outputs=diarize_btn,api_name=False)
+        process_btn.click(fn=lambda: gd.update(interactive=False), inputs=None, outputs=process_btn,api_name=False).then(fn=summarize,inputs=[output_text, prompt, session_id],outputs=[summary_text,download_summary_btn, session_id], show_progress=True, api_name=False).then(fn=lambda: gd.update(interactive=True), inputs=None, outputs=process_btn,api_name=False)
     
     demo.queue().launch(share=False, server_name=GRADIO_SERVER_NAME, server_port=GRADIO_SERVER_PORT,root_path=GRADIO_SERVER_PATH)
 
