@@ -47,9 +47,6 @@ text_extensions = tuple(os.getenv('TEXT_EXTENSIONS','.txt,.md').split(','))
 
 summary_header = "## Resumen: \n"
 
-whisper_model = os.path.join(WHISPER_MODEL_PATH,WHISPER_MODEL)
-model = WhisperModel(whisper_model, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE_TYPE)
-
 # DIARIZATION
 
 # WhisperX (acelera muy significativamente diarization) https://github.com/m-bain/whisperX/blob/main/whisperx/audio.py
