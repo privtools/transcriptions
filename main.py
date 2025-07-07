@@ -184,58 +184,58 @@ def files (session_id):
     
 
 def transcribe(media_file, language, session_id):
+    now = time.time()
+    for f in os.listdir("./transcriptions/"):
+        file_name = os.path.join("./transcriptions/",f)
+        if os.stat(file_name).st_mtime < now - 1 * 86400 and f.lower().endswith(text_extensions):
+            os.remove(file_name)
+    for f in os.listdir("./summaries/"):
+        file_name = os.path.join("./summaries/",f)
+        if os.stat(file_name).st_mtime < now - 1 * 86400 and f.lower().endswith(text_extensions):
+            os.remove(file_name)
+    for f in os.listdir("./audios/"):
+        file_name = os.path.join("./audios/",f)
+        if os.stat(file_name).st_mtime < now - 1 * 86400 and f.lower().endswith(audio_extensions):
+            os.remove(file_name)
+    transcription_text = ""
+    transcription_list = []
+    summary_text = summary_header
+    session_id = str(uuid.uuid4())
+    audio_file, transcription_file, summary_file = files(session_id)
     if media_file:
-        now = time.time()
-        for f in os.listdir("./transcriptions/"):
-            file_name = os.path.join("./transcriptions/",f)
-            if os.stat(file_name).st_mtime < now - 1 * 86400 and f.lower().endswith(text_extensions):
-                os.remove(file_name)
-        for f in os.listdir("./summaries/"):
-            file_name = os.path.join("./summaries/",f)
-            if os.stat(file_name).st_mtime < now - 1 * 86400 and f.lower().endswith(text_extensions):
-                os.remove(file_name)
-        for f in os.listdir("./audios/"):
-            file_name = os.path.join("./audios/",f)
-            if os.stat(file_name).st_mtime < now - 1 * 86400 and f.lower().endswith(audio_extensions):
-                os.remove(file_name)
-        transcription_text = ""
-        transcription_list = []
-        summary_text = summary_header
-        session_id = str(uuid.uuid4())
-        audio_file, transcription_file, summary_file = files(session_id)
-        if media_file:
-            if media_file.lower().endswith(audio_extensions) or media_file.lower().endswith(video_extensions):
-                if media_file.lower().endswith(video_extensions):
-                    gd.Info("Obteniendo audio")
-                    video_clip = VideoFileClip(media_file)
-                    audio_clip = video_clip.audio
-                    audio_clip.write_audiofile(audio_file)
-                    audio_clip.close()
-                    video_clip.close()
-                    media_file = audio_file
-                else:
-                    shutil.copy(media_file,audio_file)
-                if language=='detectar':
-                    language = None             
-                whisper_model = os.path.join(WHISPER_MODEL_PATH,WHISPER_MODEL)
-                model = WhisperModel(whisper_model, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE_TYPE)
-                segments, info = model.transcribe(media_file, beam_size=5, language=language)
-                gd.Info("Iniciando transcripción")     
-                for segment in segments:
-                    transcription_list.append({"start": segment.start, "end": segment.end, "text": segment.text})
-                    transcription_text+=("\n%s" % (segment.text))
-                    yield transcription_text, transcription_list, transcription_file, audio_file, session_id, gd.update(interactive=False), gd.update(interactive=False)
-                del model
-                gc.collect()
-            if media_file.lower().endswith(text_extensions):
-                with open(media_file,"r", encoding="utf-8") as f:
-                    transcription_text = f.read()
-                    audio_file = None
-            with open(transcription_file, "w", encoding="utf-8") as f:
-                        f.write(transcription_text)
-            yield transcription_text, transcription_list, transcription_file, audio_file, session_id, gd.update(interactive=True) if audio_file else gd.update(interactive=False), gd.update(interactive=True)
-        else:
-            gd.Info("Cargando video, dame unos segundos y vuelve a intentarlo.")
+        if media_file.lower().endswith(audio_extensions) or media_file.lower().endswith(video_extensions):
+            if media_file.lower().endswith(video_extensions):
+                gd.Info("Obteniendo audio")
+                video_clip = VideoFileClip(media_file)
+                audio_clip = video_clip.audio
+                audio_clip.write_audiofile(audio_file)
+                audio_clip.close()
+                video_clip.close()
+                media_file = audio_file
+            else:
+                shutil.copy(media_file,audio_file)
+            if language=='detectar':
+                language = None             
+            whisper_model = os.path.join(WHISPER_MODEL_PATH,WHISPER_MODEL)
+            model = WhisperModel(whisper_model, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE_TYPE)
+            segments, info = model.transcribe(media_file, beam_size=5, language=language)
+            gd.Info("Iniciando transcripción")     
+            for segment in segments:
+                transcription_list.append({"start": segment.start, "end": segment.end, "text": segment.text})
+                transcription_text+=("\n%s" % (segment.text))
+                yield transcription_text, transcription_list, transcription_file, audio_file, session_id, gd.update(interactive=False), gd.update(interactive=False)
+            del model
+            gc.collect()
+        if media_file.lower().endswith(text_extensions):
+            with open(media_file,"r", encoding="utf-8") as f:
+                transcription_text = f.read()
+                audio_file = None
+        with open(transcription_file, "w", encoding="utf-8") as f:
+                    f.write(transcription_text)
+        yield transcription_text, transcription_list, transcription_file, audio_file, session_id, gd.update(interactive=True) if audio_file else gd.update(interactive=False), gd.update(interactive=True)
+    else:
+        gd.Info("Cargando video, dame unos segundos y vuelve a intentarlo.")
+        return transcription_text, transcription_list, transcription_file, audio_file, session_id, gd.update(interactive=False), gd.update(interactive=False)
 
  
 def diarize(transcription_list, session_id):
@@ -335,9 +335,10 @@ def main():
         with gd.Row():
             with gd.Column():
                 gd.components.Textbox(label="Legal",interactive=False,value=LEGAL_DISCLAIMER)            
-                file_input = gd.components.UploadButton(type="filepath",file_types=["video", "audio","text"],label="Cargar video,audio o transcripción", variant="primary", interactive=True)
+                file_input= gd.components.File(label="Cargar video,audio o transcripción", type="filepath", file_types=["video", "audio","text"])
+                #file_input = gd.components.UploadButton(type="filepath",file_types=["video", "audio","text"],label="Cargar video,audio o transcripción", variant="primary", interactive=True)
                 language = gd.components.Dropdown(["es", "en", "fr", "detectar"], label="Idioma", info="Cual es el idioma de la ponencia?")
-                transcribe_btn = gd.Button(value="Transcribir", variant="primary")
+                transcribe_btn = gd.Button(value="Transcribir", variant="primary",interactive=False)
                 diarize_btn = gd.Button(value="Separar ponentes", variant="primary", interactive=False)
                 prompt = gd.components.Textbox(label="Prompt para el LLM:", value=LLM_DEFAULT_PROMPT)
                 process_btn = gd.Button(value="Procesar", variant="primary", interactive=False)
@@ -347,7 +348,8 @@ def main():
                 summary_text = gd.components.Markdown()
                 download_summary_btn = gd.components.DownloadButton(label="Descargar resumen", variant="primary")
                 download_audio_btn = gd.components.DownloadButton(label="Descargar audio", variant="primary")
-        
+        file_input.upload(fn=lambda: gd.update(interactive=True), inputs=None, outputs=transcribe_btn, api_name=False)
+        file_input.clear(fn=lambda: (gd.update(interactive=False),gd.update(interactive=False),gd.update(interactive=False)), inputs=None, outputs=[transcribe_btn, diarize_btn, process_btn], api_name=False)      
         transcribe_btn.click(fn=lambda: gd.update(interactive=False), inputs=None, outputs=transcribe_btn, api_name=False).then(fn=transcribe,inputs=[file_input, language, session_id],outputs=[output_text, transcription_list, download_transcription_btn,download_audio_btn, session_id, diarize_btn, process_btn], show_progress=True, api_name=False).then(fn=lambda: gd.update(interactive=True), inputs=None, outputs=transcribe_btn, api_name=False)
         diarize_btn.click(fn=lambda: gd.update(interactive=False), inputs=None, outputs=diarize_btn,api_name=False).then(fn=diarize,inputs=[transcription_list, session_id],outputs=[output_text, session_id, process_btn], show_progress=True, api_name=False).then(fn=lambda: gd.update(interactive=True), inputs=None, outputs=diarize_btn,api_name=False)
         process_btn.click(fn=lambda: gd.update(interactive=False), inputs=None, outputs=process_btn,api_name=False).then(fn=summarize,inputs=[output_text, prompt, session_id],outputs=[summary_text,download_summary_btn, session_id], show_progress=True, api_name=False).then(fn=lambda: gd.update(interactive=True), inputs=None, outputs=process_btn,api_name=False)
