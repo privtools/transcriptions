@@ -251,7 +251,7 @@ def diarize(transcription_list, session_id):
     torch.cuda.empty_cache()
     with open(transcription_file,"w",encoding="utf-8") as f:
         f.write(transcription_text)
-    return transcription_text, session_id, gd.update(interactive=True)
+    return transcription_text, session_id, gd.update(interactive=True), transcription_file
 
 
 
@@ -318,7 +318,7 @@ def summarize(transcription_text, prompt, session_id):
     except requests.exceptions.ConnectionError as e:
         summary_text = "### Error: Contacte con soporte"
     gd.Info("Trabajo finalizado")
-    return summary_text, summary_file, session_id
+    return summary_text, summary_file, session_id, summary_file
     
 
 
@@ -348,8 +348,8 @@ def main():
         file_input.upload(fn=lambda: gd.update(interactive=True), inputs=None, outputs=transcribe_btn, api_name=False)
         file_input.clear(fn=lambda: (gd.update(interactive=False),gd.update(interactive=False),gd.update(interactive=False)), inputs=None, outputs=[transcribe_btn, diarize_btn, process_btn], api_name=False)      
         transcribe_btn.click(fn=lambda: gd.update(interactive=False), inputs=None, outputs=transcribe_btn, api_name=False).then(fn=transcribe,inputs=[file_input, language, session_id],outputs=[output_text, transcription_list, download_transcription_btn,download_audio_btn, session_id, diarize_btn, process_btn], show_progress=True, api_name=False).then(fn=lambda: gd.update(interactive=True), inputs=None, outputs=transcribe_btn, api_name=False)
-        diarize_btn.click(fn=lambda: gd.update(interactive=False), inputs=None, outputs=diarize_btn,api_name=False).then(fn=diarize,inputs=[transcription_list, session_id],outputs=[output_text, session_id, process_btn], show_progress=True, api_name=False).then(fn=lambda: gd.update(interactive=True), inputs=None, outputs=diarize_btn,api_name=False)
-        process_btn.click(fn=lambda: gd.update(interactive=False), inputs=None, outputs=process_btn,api_name=False).then(fn=summarize,inputs=[output_text, prompt, session_id],outputs=[summary_text,download_summary_btn, session_id], show_progress=True, api_name=False).then(fn=lambda: gd.update(interactive=True), inputs=None, outputs=process_btn,api_name=False)
+        diarize_btn.click(fn=lambda: gd.update(interactive=False), inputs=None, outputs=diarize_btn,api_name=False).then(fn=diarize,inputs=[transcription_list, session_id],outputs=[output_text, session_id, process_btn, download_transcription_btn], show_progress=True, api_name=False).then(fn=lambda: gd.update(interactive=True), inputs=None, outputs=diarize_btn,api_name=False)
+        process_btn.click(fn=lambda: gd.update(interactive=False), inputs=None, outputs=process_btn,api_name=False).then(fn=summarize,inputs=[output_text, prompt, session_id],outputs=[summary_text,download_summary_btn, session_id, download_summary_btn], show_progress=True, api_name=False).then(fn=lambda: gd.update(interactive=True), inputs=None, outputs=process_btn,api_name=False)
     
     demo.queue().launch(share=False, server_name=GRADIO_SERVER_NAME, server_port=GRADIO_SERVER_PORT,root_path=GRADIO_SERVER_PATH)
 
