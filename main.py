@@ -1,5 +1,5 @@
 import requests
-import os, time, shutil
+import os, time, shutil, json
 import gradio as gd
 from faster_whisper import WhisperModel
 import uuid
@@ -202,7 +202,6 @@ def transcribe(media_file, language, session_id):
     if media_file:
         if media_file.lower().endswith(audio_extensions) or media_file.lower().endswith(video_extensions):
             if media_file.lower().endswith(video_extensions):
-                gd.Info("Obteniendo audio")
                 video_clip = VideoFileClip(media_file)
                 audio_clip = video_clip.audio
                 audio_clip.write_audiofile(audio_file)
@@ -215,8 +214,7 @@ def transcribe(media_file, language, session_id):
                 language = None             
             whisper_model = os.path.join(WHISPER_MODEL_PATH,WHISPER_MODEL)
             model = WhisperModel(whisper_model, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE_TYPE)
-            segments, info = model.transcribe(media_file, beam_size=5, language=language)
-            gd.Info("Iniciando transcripción")     
+            segments, info = model.transcribe(media_file, beam_size=5, language=language)   
             for segment in segments:
                 transcription_list.append({"start": segment.start, "end": segment.end, "text": segment.text})
                 transcription_text+=("\n%s" % (segment.text))
@@ -236,7 +234,6 @@ def transcribe(media_file, language, session_id):
 
  
 def diarize(transcription_list, session_id):
-    gd.Info("Iniciando identificación de ponentes")
     audio_file, transcription_file, summary_file = files(session_id)
     pipeline = Pipeline.from_pretrained("./models/config.yaml")
     pipeline.to(torch.device(WHISPER_DEVICE))
@@ -256,7 +253,6 @@ def diarize(transcription_list, session_id):
 
 
 def summarize(transcription_text, prompt, session_id):  
-    gd.Info("Creando resumen")
     audio_file, transcription_file, summary_file = files(session_id)
     first_prompt = prompt + LLM1_SYSTEM_PROMPT
     second_prompt = prompt + LLM2_SYSTEM_PROMPT
@@ -273,17 +269,21 @@ def summarize(transcription_text, prompt, session_id):
                 {"role": "user", "content": transcription_text},
                 ],
                 "model": LLM_MODEL,
-                "stream": False,
+                "stream": True,
                 "options": {"temperature": LLM_TEMPERATURE,
                             "num_ctx": LLM_CONTEXT_SIZE
                             }
             },
-            verify=True
+            verify=True,
+            stream=True
         )
         # print(response.json())
         if response.ok:
-            result = response.json()
-            summary_text = summary_header + result['choices'][0]['message']['content']
+            summary_text = '## Pensando en voz alta ....\n'
+            for line in response.iter_lines():
+                decoded_line = line.decode('utf-8')
+                summary_text += json.loads(decoded_line)['choices'][0]['message']['content']
+                yield summary_text, summary_file, session_id
         else:
             summary_text = transcription_text
     except requests.exceptions.ConnectionError as e:
@@ -302,23 +302,26 @@ def summarize(transcription_text, prompt, session_id):
                 {"role": "user", "content": summary_text},
                 ],
             "model": LLM_MODEL,
-            "stream": False,
+            "stream": True,
             "options": {"temperature": LLM_TEMPERATURE,
                         "num_ctx": LLM_CONTEXT_SIZE
                         }
         },
-        verify=True
+        verify=True,
+        stream = True
         )
         if response.ok:
             result = response.json()
-            summary_text = summary_header + result['choices'][0]['message']['content']
-            #summary_text += result['response']
+            summary_text = summary_header
+            for line in response.iter_lines():
+                decoded_line = line.decode('utf-8')
+                summary_text += json.loads(decoded_line)['choices'][0]['message']['content']
+                yield summary_text, summary_file, session_id
             with open(summary_file, "w", encoding="utf-8") as f:
                 f.write(summary_text)
     except requests.exceptions.ConnectionError as e:
         summary_text = "### Error: Contacte con soporte"
-    gd.Info("Trabajo finalizado")
-    return summary_text, summary_file, session_id, summary_file
+    yield summary_text, summary_file, session_id
     
 
 
@@ -349,7 +352,7 @@ def main():
         file_input.clear(fn=lambda: (gd.update(interactive=False),gd.update(interactive=False),gd.update(interactive=False)), inputs=None, outputs=[transcribe_btn, diarize_btn, process_btn], api_name=False)      
         transcribe_btn.click(fn=lambda: gd.update(interactive=False), inputs=None, outputs=transcribe_btn, api_name=False).then(fn=transcribe,inputs=[file_input, language, session_id],outputs=[output_text, transcription_list, download_transcription_btn,download_audio_btn, session_id, diarize_btn, process_btn], show_progress=True, api_name=False).then(fn=lambda: gd.update(interactive=True), inputs=None, outputs=transcribe_btn, api_name=False)
         diarize_btn.click(fn=lambda: gd.update(interactive=False), inputs=None, outputs=diarize_btn,api_name=False).then(fn=diarize,inputs=[transcription_list, session_id],outputs=[output_text, session_id, process_btn, download_transcription_btn], show_progress=True, api_name=False).then(fn=lambda: gd.update(interactive=True), inputs=None, outputs=diarize_btn,api_name=False)
-        process_btn.click(fn=lambda: gd.update(interactive=False), inputs=None, outputs=process_btn,api_name=False).then(fn=summarize,inputs=[output_text, prompt, session_id],outputs=[summary_text,download_summary_btn, session_id, download_summary_btn], show_progress=True, api_name=False).then(fn=lambda: gd.update(interactive=True), inputs=None, outputs=process_btn,api_name=False)
+        process_btn.click(fn=lambda: gd.update(interactive=False), inputs=None, outputs=process_btn,api_name=False).then(fn=summarize,inputs=[output_text, prompt, session_id],outputs=[summary_text,download_summary_btn, session_id], show_progress=True, api_name=False).then(fn=lambda: gd.update(interactive=True), inputs=None, outputs=process_btn,api_name=False)
     
     demo.queue().launch(share=False, server_name=GRADIO_SERVER_NAME, server_port=GRADIO_SERVER_PORT,root_path=GRADIO_SERVER_PATH)
 
