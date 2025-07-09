@@ -36,12 +36,12 @@ LLM_MAX_OUTPUT_TOKENS = int(os.getenv('LLM_MAX_OUTPUT_TOKENS', '4096'))
 LLM_CONTEXT_SIZE = int(os.getenv('LLM_CONTEXT_SIZE', '4096'))
 
 LLM_DEFAULT_PROMPT = os.getenv('LLM_DEFAULT_PROMPT', 'Haz un resumen de la ponencia. Aproximadamente 500 palabras. Incluye un titular al principio.')
-LLM1_SYSTEM_PROMPT = os.getenv('LLM1_SYSTEM_PROMPT', 'No des las gracias. Estilo de artículo periodístico. No seas esquemático.')
-LLM2_SYSTEM_PROMPT = os.getenv('LLM2_SYSTEM_PROMPT', 'No des las gracias. Estilo de artículo periodístico. No seas esquemático.')
+LLM_SYSTEM_PROMPT = os.getenv('LLM_SYSTEM_PROMPT', 'No des las gracias. Estilo de artículo periodístico. No seas esquemático.')
+
 
 LEGAL_DISCLAIMER = os.getenv('LEGAL DISCLAIMER', "Este demostrador es una Prueba de Concepto (PoC), no un producto final verificado. Los resultados arrojados por el demostrador no están verificados.")
 
-video_extensions = tuple(os.getenv('VIDEO_EXTENSIONS', '.mp4,.mov' ).split(','))
+video_extensions = tuple(os.getenv('VIDEO_EXTENSIONS', '.mp4,.mov,.mkv' ).split(','))
 audio_extensions = tuple(os.getenv('AUDIO_EXTENSIONS','.mp3,.m4a').split(','))
 text_extensions = tuple(os.getenv('TEXT_EXTENSIONS','.txt,.md').split(','))
 
@@ -254,40 +254,7 @@ def diarize(transcription_list, session_id):
 
 def summarize(transcription_text, prompt, session_id):  
     audio_file, transcription_file, summary_file = files(session_id)
-    first_prompt = prompt + LLM1_SYSTEM_PROMPT
-    second_prompt = prompt + LLM2_SYSTEM_PROMPT
-    try:
-        response = requests.post(
-            LLM_API_URL,
-            headers={"Content-Type": "application/json",
-            "Authorization": f"Bearer {LLM_AUTH_TOKEN}"
-                },
-            json={
-                "max_tokens": LLM_MAX_OUTPUT_TOKENS,
-                "messages": [
-                {"role": "system", "content": first_prompt},
-                {"role": "user", "content": transcription_text},
-                ],
-                "model": LLM_MODEL,
-                "stream": True,
-                "options": {"temperature": LLM_TEMPERATURE,
-                            "num_ctx": LLM_CONTEXT_SIZE
-                            }
-            },
-            verify=True,
-            stream=True
-        )
-        # print(response.json())
-        if response.ok:
-            summary_text = '## Pensando en voz alta ....\n'
-            for line in response.iter_lines():
-                decoded_line = line.decode('utf-8')
-                summary_text += json.loads(decoded_line)['choices'][0]['message']['content']
-                yield summary_text, summary_file, session_id
-        else:
-            summary_text = transcription_text
-    except requests.exceptions.ConnectionError as e:
-        summary_text = "### Error: Contacte con soporte"
+    full_prompt = prompt + LLM_SYSTEM_PROMPT
     
     try:
         response = requests.post(
@@ -298,8 +265,8 @@ def summarize(transcription_text, prompt, session_id):
         json={
             "max_tokens": LLM_MAX_OUTPUT_TOKENS,
                 "messages": [
-                {"role": "system", "content": second_prompt},
-                {"role": "user", "content": summary_text},
+                {"role": "system", "content": full_prompt},
+                {"role": "user", "content": transcription_text},
                 ],
             "model": LLM_MODEL,
             "stream": True,
@@ -311,12 +278,13 @@ def summarize(transcription_text, prompt, session_id):
         stream = True
         )
         if response.ok:
-            result = response.json()
             summary_text = summary_header
             for line in response.iter_lines():
-                decoded_line = line.decode('utf-8')
-                summary_text += json.loads(decoded_line)['choices'][0]['message']['content']
-                yield summary_text, summary_file, session_id
+                decoded_line = line.decode('utf-8')[5:]
+                if 'chat.completion.chunk' in decoded_line:
+                    chat_buufer = json.loads(decoded_line).get('choices')[0].get('delta').get('content')
+                    if chat_buufer: summary_text += chat_buufer
+                    yield summary_text, summary_file, session_id
             with open(summary_file, "w", encoding="utf-8") as f:
                 f.write(summary_text)
     except requests.exceptions.ConnectionError as e:
@@ -336,7 +304,6 @@ def main():
             with gd.Column():
                 gd.components.Textbox(label="Legal",interactive=False,value=LEGAL_DISCLAIMER)            
                 file_input= gd.components.File(label="Cargar video,audio o transcripción", type="filepath", file_types=["video", "audio","text"])
-                #file_input = gd.components.UploadButton(type="filepath",file_types=["video", "audio","text"],label="Cargar video,audio o transcripción", variant="primary", interactive=True)
                 language = gd.components.Dropdown(["es", "en", "fr", "detectar"], label="Idioma", info="Cual es el idioma de la ponencia?")
                 transcribe_btn = gd.Button(value="Transcribir", variant="primary",interactive=False)
                 diarize_btn = gd.Button(value="Separar ponentes", variant="primary", interactive=False)
