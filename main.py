@@ -294,7 +294,7 @@ def summarize(transcription_text, prompt, session_id):
 
 
 def main():
-    with gd.Blocks() as demo:
+    with gd.Blocks(analytics_enabled=False) as demo:
         session_id = gd.State(None)
         transcription_list = gd.State(None)
 
